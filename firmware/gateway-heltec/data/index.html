@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Tank Levels</title>
+	<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+	<header class="topbar">
+		<div>
+			<div class="title">Tank Monitor</div>
+			<div class="subtitle" id="subtitle">Gateway: connecting…</div>
+		</div>
+		<nav class="nav">
+			<a href="/">Dashboard</a>
+			<a href="/setup.html">Setup</a>
+		</nav>
+	</header>
+
+	<main class="container">
+		<section class="grid" id="tankGrid"></section>
+	</main>
+
+	<template id="tankCardTpl">
+		<article class="card">
+			<div class="cardhead">
+				<div>
+					<div class="tankname"></div>
+					<div class="small muted">ID: <span class="tankid"></span></div>
+				</div>
+				<div class="pill status">UNKNOWN</div>
+			</div>
+
+			<div class="metrics">
+				<div class="metric">
+					<div class="label">Level</div>
+					<div class="value"><span class="level">--</span>%</div>
+					<div class="bar"><div class="fill levelFill"></div></div>
+				</div>
+				<div class="metric">
+					<div class="label">Battery</div>
+					<div class="value"><span class="batpct">--</span>% <span class="small muted">(<span class="batv">--</span>V)</span></div>
+					<div class="bar"><div class="fill batFill"></div></div>
+				</div>
+				<div class="metric">
+					<div class="label">Time to empty</div>
+					<div class="value"><span class="tte">--</span></div>
+					<div class="small muted">Last seen: <span class="lastseen">--</span></div>
+				</div>
+			</div>
+		</article>
+	</template>
+
+	<script src="/app.js"></script>
+</body>
+</html>

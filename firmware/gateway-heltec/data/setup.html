@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Setup - Tank Monitor</title>
+	<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+	<header class="topbar">
+		<div>
+			<div class="title">Setup</div>
+			<div class="subtitle">Configure how many tanks and basic parameters</div>
+		</div>
+		<nav class="nav">
+			<a href="/">Dashboard</a>
+			<a href="/setup.html" class="active">Setup</a>
+		</nav>
+	</header>
+
+	<main class="container">
+		<section class="card">
+			<h2>System</h2>
+			<div class="row">
+				<label class="field">
+					<div class="label">Number of tanks</div>
+					<select id="tankCount"></select>
+				</label>
+				<label class="field">
+					<div class="label">Offline timeout (seconds)</div>
+					<input id="offlineTimeoutS" type="number" min="5" step="1" />
+				</label>
+			</div>
+			<div class="row">
+				<label class="field">
+					<div class="label">LoRa key (simple shared key)</div>
+					<input id="loraKey" type="text" placeholder="optional" />
+					<div class="hint">Not encryption. Just a shared token to ignore other packets.</div>
+				</label>
+			</div>
+			<div class="actions">
+				<button id="saveBtn">Save</button>
+				<div class="small muted" id="saveStatus"></div>
+			</div>
+		</section>
+
+		<section class="card">
+			<h2>Tanks</h2>
+			<div class="small muted">Capacity + consumption are used for time-to-empty.</div>
+			<div id="tankList"></div>
+		</section>
+	</main>
+
+	<template id="tankRowTpl">
+		<div class="tankRow">
+			<div class="row">
+				<label class="field">
+					<div class="label">Name</div>
+					<input class="name" type="text" />
+				</label>
+				<label class="field">
+					<div class="label">Capacity (liters)</div>
+					<input class="capacityL" type="number" min="0" step="0.1" />
+				</label>
+				<label class="field">
+					<div class="label">Use/day (liters)</div>
+					<input class="usePerDayL" type="number" min="0" step="0.1" />
+				</label>
+			</div>
+		</div>
+	</template>
+
+	<script src="/setup.js"></script>
+</body>
+</html>
