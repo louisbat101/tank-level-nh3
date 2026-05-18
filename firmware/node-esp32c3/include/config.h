@@ -6,36 +6,11 @@
 #define TANK_ID 1
 #endif
 
-// ====== LoRa (external SX127x module on ESP32-C3) ======
-// Placeholder pins - MUST be updated for your wiring.
-// SPI pins may also be set by your board variant.
-#ifndef LORA_SCK
-#define LORA_SCK 4
-#endif
-#ifndef LORA_MISO
-#define LORA_MISO 5
-#endif
-#ifndef LORA_MOSI
-#define LORA_MOSI 6
-#endif
-#ifndef LORA_SS
-#define LORA_SS 7
-#endif
-#ifndef LORA_RST
-#define LORA_RST 8
-#endif
-#ifndef LORA_DIO0
-#define LORA_DIO0 9
-#endif
-
-// Set your region frequency (US=915E6, EU=868E6, etc.)
-#ifndef LORA_FREQ_HZ
-#define LORA_FREQ_HZ 915E6
-#endif
-
-// Shared key string (simple token, not encryption)
-#ifndef LORA_KEY
-#define LORA_KEY ""
+// ====== ESP-NOW Gateway ======
+// Gateway MAC address (find via gateway serial output or config)
+// Format: {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
+#ifndef GATEWAY_MAC
+#define GATEWAY_MAC {0xAC, 0xA7, 0x04, 0x08, 0x40, 0x78}
 #endif
 
 // ====== ADC placeholders ======

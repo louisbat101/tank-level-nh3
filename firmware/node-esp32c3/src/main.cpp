@@ -1,6 +1,6 @@
 #include <Arduino.h>
-#include <SPI.h>
-#include <LoRa.h>
+#include <WiFi.h>
+#include <esp_now.h>
 
 #include "config.h"
 
@@ -12,6 +12,8 @@ struct __attribute__((packed)) TankPacket {
   uint8_t battPct;        // 0..100
   uint16_t crc;           // simple checksum
 };
+
+static uint8_t gatewayMac[6];
 
 static uint16_t checksum16(const uint8_t* data, size_t n) {
   uint16_t s = 0;
@@ -52,9 +54,22 @@ static uint8_t battPctFromV(float vbatt){
   return (uint8_t)roundf(clamp01(t) * 100.0f);
 }
 
+static void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  if (status == ESP_NOW_SEND_SUCCESS) {
+    blinkLed(PIN_LED_COMMS, 40);
+  }
+}
+
 void setup(){
   Serial.begin(115200);
   delay(200);
+  Serial.println("\n\n=== C3 Tank Node Starting ===");
+
+  // Initialize gateway MAC from config
+  uint8_t mac_init[] = GATEWAY_MAC;
+  memcpy(gatewayMac, mac_init, 6);
+  Serial.printf("Gateway MAC: %02X:%02X:%02X:%02X:%02X:%02X\n", 
+    gatewayMac[0], gatewayMac[1], gatewayMac[2], gatewayMac[3], gatewayMac[4], gatewayMac[5]);
 
   analogReadResolution(12);
 
@@ -63,16 +78,35 @@ void setup(){
   ledWrite(PIN_LED_COMMS, false);
   ledWrite(PIN_LED_POWER, true);
 
-  SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
-  LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
+  // Initialize WiFi in station mode (required for ESP-NOW)
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  Serial.println("WiFi initialized in STA mode");
 
-  if (!LoRa.begin(LORA_FREQ_HZ)) {
-    Serial.println("LoRa init failed");
+  // Initialize ESP-NOW
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW init failed");
     while (true) delay(1000);
   }
+  Serial.println("ESP-NOW initialized");
 
-  LoRa.setTxPower(17);
-  Serial.println("Tank node started");
+  // Register send callback
+  esp_now_register_send_cb(onDataSent);
+  Serial.println("Send callback registered");
+
+  // Add gateway peer
+  esp_now_peer_info_t peerInfo = {};
+  memcpy(peerInfo.peer_addr, gatewayMac, 6);
+  peerInfo.channel = 0;
+  peerInfo.encrypt = false;
+
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+    Serial.println("Failed to add peer");
+  } else {
+    Serial.println("Gateway peer added successfully");
+  }
+
+  Serial.println("Tank node started (ESP-NOW mode)");
 }
 
 void loop(){
@@ -93,15 +127,11 @@ void loop(){
   p.crc = 0;
   p.crc = checksum16(reinterpret_cast<const uint8_t*>(&p), sizeof(p) - sizeof(p.crc));
 
-  LoRa.beginPacket();
-  LoRa.write((const uint8_t*)LORA_KEY, strlen(LORA_KEY));
-  LoRa.write(0); // key terminator
-  LoRa.write((uint8_t*)&p, sizeof(p));
-  const int ok = LoRa.endPacket();
-  if (ok == 1) {
-    blinkLed(PIN_LED_COMMS, 40);
-  }
-
-  Serial.printf("Sent tank=%u level=%.1f%% (gauge=%.2fV) batt=%.2fV (%u%%)\n", p.tankId, levelPct, gaugeRealV, battV, battPct);
+  esp_err_t result = esp_now_send(gatewayMac, (uint8_t*)&p, sizeof(p));
+  
+  Serial.printf("Sent tank=%u level=%.1f%% (gauge=%.2fV) batt=%.2fV (%u%%) [%s]\n", 
+    p.tankId, levelPct, gaugeRealV, battV, battPct, 
+    (result == ESP_OK) ? "OK" : "FAIL");
+  
   delay(SEND_PERIOD_MS);
 }

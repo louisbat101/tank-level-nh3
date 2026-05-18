@@ -21,3 +21,24 @@
 #ifndef DEFAULT_OFFLINE_TIMEOUT_S
 #define DEFAULT_OFFLINE_TIMEOUT_S 30
 #endif
+
+// ====== OLED (Heltec V3) ======
+#ifndef USE_OLED
+#define USE_OLED 0
+#endif
+#ifndef OLED_SDA
+#define OLED_SDA 21
+#endif
+#ifndef OLED_SCL
+#define OLED_SCL 22
+#endif
+#ifndef OLED_RST
+#define OLED_RST -1
+#endif
+// Heltec boards often require Vext to be enabled (active LOW) to power the OLED.
+#ifndef OLED_VEXT_PIN
+#define OLED_VEXT_PIN 36
+#endif
+#ifndef OLED_I2C_ADDR
+#define OLED_I2C_ADDR 0x3C
+#endif

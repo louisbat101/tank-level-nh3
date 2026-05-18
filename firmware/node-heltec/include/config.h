@@ -51,6 +51,14 @@
 #define SEND_PERIOD_MS 5000
 #endif
 
+// ====== Tank node WiFi AP (status page) ======
+#ifndef NODE_AP_SSID_PREFIX
+#define NODE_AP_SSID_PREFIX "TankNode-"
+#endif
+#ifndef NODE_AP_PASS
+#define NODE_AP_PASS "tanknode"
+#endif
+
 // ====== LEDs (Heltec) ======
 // Uses the board's built-in LED by default.
 #ifndef PIN_LED_POWER
@@ -59,7 +67,33 @@
 #ifndef PIN_LED_COMMS
 #define PIN_LED_COMMS LED_BUILTIN
 #endif
-// Many built-in LEDs are active-low; set to 0 if your LED is inverted.
-#ifndef LED_ACTIVE_HIGH
-#define LED_ACTIVE_HIGH 0
+#ifndef OLED_RST
+// Heltec V3 OLED reset is often not connected; keep -1 unless you know the pin.
+#define OLED_RST -1
+#endif
+// Vext powers the OLED on many Heltec boards (LOW = ON).
+#ifndef OLED_VEXT_PIN
+#define OLED_VEXT_PIN 21
+#endif
+
+// ====== OLED (Heltec V3) ======
+// Default pins may need adjustment depending on board revision.
+#ifndef OLED_SDA
+#define OLED_SDA 17
+#endif
+#ifndef OLED_SCL
+#define OLED_SCL 18
+#endif
+// Use -1 if OLED reset is not connected.
+#ifndef OLED_RST
+#define OLED_RST -1
+#endif
+// Heltec boards often require Vext to be enabled (active LOW) to power the OLED.
+// Set to your board's Vext pin (commonly GPIO21); -1 disables.
+#ifndef OLED_VEXT_PIN
+#define OLED_VEXT_PIN 21
+#endif
+// I2C address (0x3C is most common)
+#ifndef OLED_I2C_ADDR
+#define OLED_I2C_ADDR 0x3C
 #endif
