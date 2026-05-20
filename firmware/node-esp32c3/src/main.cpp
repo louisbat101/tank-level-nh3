@@ -1,6 +1,6 @@
 #include <Arduino.h>
-#include <SPI.h>
-#include <LoRa.h>
+#include <WiFi.h>
+#include <esp_now.h>
 
 #include "config.h"
 
@@ -12,6 +12,8 @@ struct __attribute__((packed)) TankPacket {
   uint8_t battPct;        // 0..100
   uint16_t crc;           // simple checksum
 };
+
+static uint8_t gatewayMac[6];
 
 static uint16_t checksum16(const uint8_t* data, size_t n) {
   uint16_t s = 0;
@@ -52,56 +54,29 @@ static uint8_t battPctFromV(float vbatt){
   return (uint8_t)roundf(clamp01(t) * 100.0f);
 }
 
+static void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  if (status == ESP_NOW_SEND_SUCCESS) {
+    blinkLed(PIN_LED_COMMS, 40);
+  }
+}
+
 void setup(){
+  // Test with LED blinking - no Serial
+  pinMode(2, OUTPUT);  // GPIO 2 - LED pin
+  digitalWrite(2, HIGH);
+  delay(500);
+  digitalWrite(2, LOW);
+  
   Serial.begin(115200);
   delay(200);
-
-  analogReadResolution(12);
-
-  pinMode(PIN_LED_POWER, OUTPUT);
-  pinMode(PIN_LED_COMMS, OUTPUT);
-  ledWrite(PIN_LED_COMMS, false);
-  ledWrite(PIN_LED_POWER, true);
-
-  SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
-  LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
-
-  if (!LoRa.begin(LORA_FREQ_HZ)) {
-    Serial.println("LoRa init failed");
-    while (true) delay(1000);
-  }
-
-  LoRa.setTxPower(17);
-  Serial.println("Tank node started");
+  Serial.println("\nC3 BOOTED!");
 }
 
 void loop(){
-  const float gaugeAdcV = readAdcV(PIN_GAUGE_ADC);
-  const float gaugeRealV = gaugeAdcV * GAUGE_DIV_RATIO;
-  const float levelPct = levelPctFromGaugeV(gaugeRealV);
-
-  const float battAdcV = readAdcV(PIN_BATT_ADC);
-  const float battV = battAdcV * BATT_DIV_RATIO;
-  const uint8_t battPct = battPctFromV(battV);
-
-  TankPacket p{};
-  p.tankId = (uint8_t)TANK_ID;
-  p.uptimeS = millis() / 1000;
-  p.levelPct_x100 = (uint16_t)roundf(levelPct * 100.0f);
-  p.battV_mV = (uint16_t)roundf(battV * 1000.0f);
-  p.battPct = battPct;
-  p.crc = 0;
-  p.crc = checksum16(reinterpret_cast<const uint8_t*>(&p), sizeof(p) - sizeof(p.crc));
-
-  LoRa.beginPacket();
-  LoRa.write((const uint8_t*)LORA_KEY, strlen(LORA_KEY));
-  LoRa.write(0); // key terminator
-  LoRa.write((uint8_t*)&p, sizeof(p));
-  const int ok = LoRa.endPacket();
-  if (ok == 1) {
-    blinkLed(PIN_LED_COMMS, 40);
-  }
-
-  Serial.printf("Sent tank=%u level=%.1f%% (gauge=%.2fV) batt=%.2fV (%u%%)\n", p.tankId, levelPct, gaugeRealV, battV, battPct);
-  delay(SEND_PERIOD_MS);
+  digitalWrite(2, HIGH);
+  Serial.println("ON");
+  delay(500);
+  digitalWrite(2, LOW);
+  Serial.println("OFF");
+  delay(500);
 }

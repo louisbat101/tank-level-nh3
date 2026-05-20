@@ -53,14 +53,14 @@
 #define GAUGE_V_FULL 5.0f
 #endif
 
-// ====== LEDs (ESP32-C3) ======
+// ====== LEDs (ESP32) ======
 // Power/status LED: on solid when running
 #ifndef PIN_LED_POWER
-#define PIN_LED_POWER 2
+#define PIN_LED_POWER 4
 #endif
-// Comms LED: blinks briefly each successful LoRa send
+// Comms LED: blinks briefly each successful ESP-NOW send
 #ifndef PIN_LED_COMMS
-#define PIN_LED_COMMS 3
+#define PIN_LED_COMMS 5
 #endif
 #ifndef LED_ACTIVE_HIGH
 #define LED_ACTIVE_HIGH 1
