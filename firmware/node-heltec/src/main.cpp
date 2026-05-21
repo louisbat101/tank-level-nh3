@@ -1,9 +1,10 @@
 #include <Arduino.h>
-#include <LoRa.h>
+#include <RadioLib.h>
 #include <Wire.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <U8g2lib.h>
+#include <esp_task_wdt.h>
 
 #include "config.h"
 
@@ -19,6 +20,11 @@ struct __attribute__((packed)) TankPacket {
 static U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, OLED_RST, OLED_SCL, OLED_SDA);
 static WebServer server(80);
 static IPAddress apIp;
+
+// RadioLib for SX1262 on Heltec V3
+static SPIClass* loRaSPI = nullptr;
+static Module* loRaModule = nullptr;
+static SX1262* radio = nullptr;
 
 static uint16_t checksum16(const uint8_t* data, size_t n) {
   uint16_t s = 0;
@@ -71,19 +77,15 @@ static void blinkLed(uint8_t pin, uint16_t ms) {
 }
 
 static uint8_t detectOledAddress() {
-  const uint8_t candidates[] = {0x3C, 0x3D};
-  for (uint8_t addr : candidates) {
-    Wire.beginTransmission(addr);
-    if (Wire.endTransmission() == 0) {
-      return addr;
-    }
-  }
+  // Just return the default - attempting I2C scan causes hangs on some boards
   return OLED_I2C_ADDR;
 }
 
 void setup(){
+  delay(500);  // Wait for bootloader to stabilize
   Serial.begin(115200);
   delay(200);
+  Serial.println("\n\nTank Node booting...");
 
   analogReadResolution(12);
 
@@ -96,28 +98,51 @@ void setup(){
   Wire.begin(OLED_SDA, OLED_SCL);
   Wire.setClock(400000);
   const uint8_t oledAddr = detectOledAddress();
-  u8g2.setI2CAddress(oledAddr << 1);
-  u8g2.begin();
   Serial.printf("OLED I2C addr: 0x%02X\n", oledAddr);
-  u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_6x12_tr);
-  u8g2.drawStr(0, 12, "OLED init...");
-  u8g2.sendBuffer();
+  
+  // Skip OLED init for now - causes hangs on some boards
+  // u8g2.setI2CAddress(oledAddr << 1);
+  // u8g2.begin();
 
   pinMode(PIN_LED_POWER, OUTPUT);
   pinMode(PIN_LED_COMMS, OUTPUT);
   ledWrite(PIN_LED_COMMS, false);
   ledWrite(PIN_LED_POWER, true);
 
-  if (!LoRa.begin(LORA_FREQ_HZ)) {
-    Serial.println("LoRa init failed");
-    while (true) delay(1000);
+  // Configure LoRa with RadioLib
+  Serial.printf("LoRa SPI pins: SCK=9 MISO=11 MOSI=10 CS=8\n");
+  loRaSPI = new SPIClass(HSPI);
+  loRaSPI->begin(9, 11, 10, 8);
+  Serial.println("SPI initialized");
+  
+  // Module(CS, IRQ, RST, GPIO0, SPI)
+  // GPIO 37 (RST) and 36 (GPIO0) may not work as outputs on this board
+  // Try with -1 to disable hardware reset and GPIO0
+  loRaModule = new Module(8, 35, -1, -1, *loRaSPI);
+  Serial.println("Module created");
+  
+  radio = new SX1262(loRaModule);
+  Serial.println("Calling radio->begin()...");
+  
+  int state = radio->begin();
+  Serial.printf("radio->begin() returned: %d\n", state);
+  
+  if (state != RADIOLIB_ERR_NONE) {
+    Serial.printf("LoRa init failed: %d\n", state);
+    // Don't hang - allow node to still broadcast WiFi AP and status
+  } else {
+    radio->setFrequency(LORA_FREQ_HZ / 1e6);
+    radio->setBandwidth(125.0);
+    radio->setSpreadingFactor(7);
+    radio->setCodingRate(5);
+    radio->setOutputPower(17);
+    // Try to increase preamble length and disable CCA to reduce TX timeouts
+    radio->setPreambleLength(8);
+    // Use implicit header (shorter packets)
+    radio->implicitHeader(sizeof(TankPacket));
+    Serial.println("LoRa initialized");
   }
 
-  LoRa.setTxPower(17);
-  Serial.println("Heltec tank node started");
-
-  // WiFi AP + status page
   WiFi.mode(WIFI_AP);
   String ssid = String(NODE_AP_SSID_PREFIX) + String(TANK_ID);
   WiFi.softAP(ssid.c_str(), NODE_AP_PASS);
@@ -132,17 +157,12 @@ void setup(){
     html += "<p>ID: " + String(TANK_ID) + "</p>";
     html += "<p>AP IP: " + apIp.toString() + "</p>";
     html += "<p>Uptime: " + String(millis() / 1000) + "s</p>";
-    html += "<p>Last level: " + String("--") + "</p>";
     html += "</body></html>";
     server.send(200, "text/html", html);
   });
 
   server.on("/status", HTTP_GET, []() {
-    String json = "{";
-    json += "\"id\":" + String(TANK_ID) + ",";
-    json += "\"uptimeS\":" + String(millis() / 1000) + ",";
-    json += "\"ip\":\"" + apIp.toString() + "\"";
-    json += "}";
+    String json = "{\"id\":" + String(TANK_ID) + ",\"uptimeS\":" + String(millis() / 1000) + "}";
     server.send(200, "application/json", json);
   });
 
@@ -154,6 +174,11 @@ void loop(){
   const uint32_t now = millis();
 
   server.handleClient();
+
+  if (!radio) {
+    delay(100);
+    return;
+  }
 
   if (now - lastSendMs >= SEND_PERIOD_MS) {
     lastSendMs = now;
@@ -175,17 +200,30 @@ void loop(){
     p.crc = 0;
     p.crc = checksum16(reinterpret_cast<const uint8_t*>(&p), sizeof(p) - sizeof(p.crc));
 
-    LoRa.beginPacket();
-    LoRa.write((const uint8_t*)LORA_KEY, strlen(LORA_KEY));
-    LoRa.write(0);
-    LoRa.write((uint8_t*)&p, sizeof(p));
-    const int ok = LoRa.endPacket();
-    if (ok == 1) {
-      blinkLed(PIN_LED_COMMS, 40);
+    // Try to put radio into standby before transmitting
+    if (radio) {
+      radio->standby();
+      delay(50);  // Give it longer to switch modes
+      // Try transmit up to 3 times before giving up
+      int state = RADIOLIB_ERR_TX_TIMEOUT;
+      for (int attempt = 0; attempt < 3 && state == RADIOLIB_ERR_TX_TIMEOUT; attempt++) {
+        state = radio->transmit((uint8_t*)&p, sizeof(p));
+        if (state != RADIOLIB_ERR_NONE) {
+          delay(100);  // Wait between retries
+        }
+      }
+      if (state == RADIOLIB_ERR_NONE) {
+        blinkLed(PIN_LED_COMMS, 40);
+        Serial.println("TX success");
+      } else {
+        Serial.printf("TX failed: %d (after retries)\n", state);
+      }
+      // Go back to sleep to save power
+      radio->sleep();
     }
 
-    drawStatus(levelPct, battV, battPct);
-
-    Serial.printf("Sent tank=%u level=%.1f%% (gauge=%.2fV) batt=%.2fV (%u%%)\n", p.tankId, levelPct, gaugeRealV, battV, battPct);
+    // Skip OLED for now
+    // drawStatus(levelPct, battV, battPct);
+    Serial.printf("Sent tank=%u level=%.1f%% batt=%.2fV (%u%%)\n", p.tankId, levelPct, battV, battPct);
   }
 }

@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_now.h>
+#include <esp_wifi.h>
 
 #include "config.h"
 
@@ -63,68 +64,38 @@ static void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 void setup(){
   Serial.begin(115200);
   delay(500);
-  Serial.println("\n=== ESP32 TANK NODE ===");
+  Serial.println("Tank1 Ready");
   
-  // Initialize gateway MAC from config
   uint8_t mac_init[] = GATEWAY_MAC;
   memcpy(gatewayMac, mac_init, 6);
 
-  analogReadResolution(12);
-
-  pinMode(PIN_LED_POWER, OUTPUT);
-  pinMode(PIN_LED_COMMS, OUTPUT);
-  ledWrite(PIN_LED_COMMS, false);
-  ledWrite(PIN_LED_POWER, true);
-
-  // Initialize WiFi in station mode (required for ESP-NOW)
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
-  delay(100);
 
-  // Initialize ESP-NOW
-  esp_err_t err = esp_now_init();
-  if (err != ESP_OK) {
-    Serial.println("ESP-NOW FAILED!");
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW FAIL");
     while (true) delay(1000);
   }
 
-  // Register send callback
-  esp_now_register_send_cb(onDataSent);
-
-  // Add gateway peer
   esp_now_peer_info_t peerInfo = {};
   memcpy(peerInfo.peer_addr, gatewayMac, 6);
-  peerInfo.channel = 0;
+  peerInfo.channel = 0;  // Auto
   peerInfo.encrypt = false;
-
-  err = esp_now_add_peer(&peerInfo);
-  if (err != ESP_OK) {
-    Serial.println("Peer add FAILED!");
-  }
-
-  Serial.println("Ready!");
+  esp_now_add_peer(&peerInfo);
+  Serial.println("Peer added");
 }
 
 void loop(){
-  const float gaugeAdcV = readAdcV(PIN_GAUGE_ADC);
-  const float gaugeRealV = gaugeAdcV * GAUGE_DIV_RATIO;
-  const float levelPct = levelPctFromGaugeV(gaugeRealV);
-
-  const float battAdcV = readAdcV(PIN_BATT_ADC);
-  const float battV = battAdcV * BATT_DIV_RATIO;
-  const uint8_t battPct = battPctFromV(battV);
-
   TankPacket p{};
-  p.tankId = (uint8_t)TANK_ID;
+  p.tankId = 1;
   p.uptimeS = millis() / 1000;
-  p.levelPct_x100 = (uint16_t)roundf(levelPct * 100.0f);
-  p.battV_mV = (uint16_t)roundf(battV * 1000.0f);
-  p.battPct = battPct;
+  p.levelPct_x100 = 5000;  // 50%
+  p.battV_mV = 4200;
+  p.battPct = 100;
   p.crc = 0;
-  p.crc = checksum16(reinterpret_cast<const uint8_t*>(&p), sizeof(p) - sizeof(p.crc));
+  p.crc = checksum16((uint8_t*)&p, sizeof(p) - 2);
 
   esp_now_send(gatewayMac, (uint8_t*)&p, sizeof(p));
-  Serial.println("TX");
-  
-  delay(SEND_PERIOD_MS);
+  Serial.println("Sent");
+  delay(5000);
 }

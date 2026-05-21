@@ -5,14 +5,16 @@
 #include <Preferences.h>
 
 #include <Wire.h>
+#if USE_OLED
 #include <U8g2lib.h>
+#endif
 
 #include <LittleFS.h>
 
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
 
-#include <LoRa.h>
+#include <RadioLib.h>
 
 #if __has_include("config.h")
 #include "config.h"
@@ -67,6 +69,13 @@ static uint32_t g_offlineTimeoutS = DEFAULT_OFFLINE_TIMEOUT_S;
 static String g_loraKey = "";
 static TankState g_tanks[8];
 static bool g_loraOk = false;
+
+// RadioLib for SX1262 on Heltec V3
+// SPI pins: SCK=9, MOSI=10, MISO=11, CS=8
+// DIO1=35 (for packet reception), BUSY=36, RESET=37
+static SPIClass* loRaSPI = nullptr;
+static Module* loRaModule = nullptr;
+static SX1262* radio = nullptr;
 
 static const char* contentTypeForPath(const String& path) {
   if (path.endsWith(".html")) return "text/html";
@@ -390,40 +399,19 @@ static void setupWeb() {
   server.begin();
 }
 
-static bool parsePacket(int packetLen, TankPacket& outPacket) {
-  if (packetLen <= 0) return false;
-
-  // Read key prefix
-  String key;
-  while (LoRa.available()) {
-    const int c = LoRa.read();
-    if (c < 0) break;
-    if (c == 0) break;
-    key += (char)c;
-    if (key.length() > 32) break;
-  }
-
-  if (g_loraKey.length() && key != g_loraKey) {
-    // ignore other systems
-    return false;
-  }
-
-  if (LoRa.available() < (int)sizeof(TankPacket)) return false;
-  uint8_t buf[sizeof(TankPacket)];
-  for (size_t i = 0; i < sizeof(TankPacket); i++) {
-    int c = LoRa.read();
-    if (c < 0) return false;
-    buf[i] = (uint8_t)c;
-  }
-  memcpy(&outPacket, buf, sizeof(TankPacket));
-
-  const uint16_t expect = checksum16(buf, sizeof(TankPacket) - sizeof(outPacket.crc));
+static bool parsePacket(const uint8_t* data, size_t len, TankPacket& outPacket) {
+  if (len < sizeof(TankPacket)) return false;
+  
+  memcpy(&outPacket, data, sizeof(TankPacket));
+  
+  const uint16_t expect = checksum16(data, sizeof(TankPacket) - sizeof(outPacket.crc));
   if (expect != outPacket.crc) return false;
   if (outPacket.tankId < 1 || outPacket.tankId > 8) return false;
   return true;
 }
 
 static void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
+  Serial.print(".");  // Simple dot to show we're receiving packets
   if (len != (int)sizeof(TankPacket)) return;
   
   TankPacket p;
@@ -497,22 +485,46 @@ void setup() {
     esp_now_register_recv_cb(onEspNowRecv);
   }
 
-  // LoRa
-#if defined(LORA_SCK) && defined(LORA_MISO) && defined(LORA_MOSI) && defined(LORA_SS)
+  // LoRa (RadioLib for SX1262)
   Serial.printf("LoRa freq: %.0f Hz\n", (double)LORA_FREQ_HZ);
-  Serial.printf("LoRa pins: SCK=%d MISO=%d MOSI=%d SS=%d", LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
-#if defined(LORA_RST) && defined(LORA_DIO0)
-  Serial.printf(" RST=%d DIO0=%d", LORA_RST, LORA_DIO0);
-  LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
-#else
-  LoRa.setPins(LORA_SS, -1, -1);
-#endif
-  Serial.println();
-#else
-  Serial.printf("LoRa freq: %.0f Hz\n", (double)LORA_FREQ_HZ);
-  Serial.printf("SPI pins: SCK=%d MISO=%d MOSI=%d SS=%d\n", SCK, MISO, MOSI, SS);
-#endif
-  g_loraOk = LoRa.begin(LORA_FREQ_HZ);
+  Serial.printf("LoRa SPI pins: SCK=9 MOSI=10 MISO=11 CS=8\n");
+  Serial.println("Initializing SX1262...");
+  
+  // Initialize SPI for LoRa
+  loRaSPI = new SPIClass(HSPI);
+  loRaSPI->begin(9, 11, 10, 8);  // SCK, MISO, MOSI, CS
+  
+  // Create Module object for RadioLib
+  // Module(uint32_t cs, uint32_t irq, uint32_t rst, uint32_t gpio, SPIClass& spi, SPISettings spiSettings)
+  // GPIO 37 (RST) and 36 (GPIO0) don't work as outputs on this board - use -1
+  Serial.println("Creating LoRa module with CS=8, IRQ=35, RST=-1, GPIO=-1...");
+  loRaModule = new Module(8, 35, -1, -1, *loRaSPI);
+  
+  // Create and initialize LoRa module
+  radio = new SX1262(loRaModule);
+  
+  int state = radio->begin();
+  g_loraOk = (state == RADIOLIB_ERR_NONE);
+  if (!g_loraOk) {
+    Serial.printf("LoRa begin failed: %d\n", state);
+  } else {
+    // Configure for LoRa mode, 915 MHz, 125 kHz bandwidth, SF=7, CR=4/5
+    state = radio->setFrequency(LORA_FREQ_HZ / 1e6);
+    Serial.printf("setFrequency: %d\n", state);
+    g_loraOk = (state == RADIOLIB_ERR_NONE);
+    if (g_loraOk) {
+      radio->setBandwidth(125.0);
+      radio->setSpreadingFactor(7);
+      radio->setCodingRate(5);
+      radio->setOutputPower(17);
+      radio->setPreambleLength(8);
+      radio->implicitHeader(12);  // TankPacket is ~12 bytes
+      state = radio->startReceive();
+      Serial.printf("startReceive: %d\n", state);
+      g_loraOk = (state == RADIOLIB_ERR_NONE);
+    }
+  }
+  
   if (!g_loraOk) {
     Serial.println("LoRa init failed (continuing without LoRa)");
   } else {
@@ -536,22 +548,27 @@ void setup() {
 }
 
 void loop() {
-  if (g_loraOk) {
-    const int packetLen = LoRa.parsePacket();
-    if (packetLen) {
-      TankPacket p{};
-      if (parsePacket(packetLen, p)) {
-        const uint8_t idx = (uint8_t)(p.tankId - 1);
-        if (idx < 8) {
-          TankState& t = g_tanks[idx];
-          t.levelPct = (float)p.levelPct_x100 / 100.0f;
-          t.battV = (float)p.battV_mV / 1000.0f;
-          t.battPct = p.battPct;
-          t.lastSeenMs = millis();
-          t.online = true;
-          wsBroadcastState();
-          Serial.printf("RX tank=%u level=%.1f batt=%.2fV (%u%%)\n", p.tankId, t.levelPct, t.battV, t.battPct);
-          drawStatus();
+  if (g_loraOk && radio) {
+    // Check if a packet has been received
+    int state = radio->available();
+    if (state > 0) {
+      uint8_t buf[256];
+      int len = radio->readData(buf, 256);
+      if (len > 0) {
+        TankPacket p{};
+        if (parsePacket(buf, (size_t)len, p)) {
+          const uint8_t idx = (uint8_t)(p.tankId - 1);
+          if (idx < 8) {
+            TankState& t = g_tanks[idx];
+            t.levelPct = (float)p.levelPct_x100 / 100.0f;
+            t.battV = (float)p.battV_mV / 1000.0f;
+            t.battPct = p.battPct;
+            t.lastSeenMs = millis();
+            t.online = true;
+            wsBroadcastState();
+            Serial.printf("RX tank=%u level=%.1f batt=%.2fV (%u%%)\n", p.tankId, t.levelPct, t.battV, t.battPct);
+            drawStatus();
+          }
         }
       }
     }

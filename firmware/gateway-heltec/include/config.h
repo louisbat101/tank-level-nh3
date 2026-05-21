@@ -1,7 +1,28 @@
 #pragma once
 
+// ====== LoRa (SX1262 on Heltec WiFi LoRa 32 V3) ======
 #ifndef LORA_FREQ_HZ
 #define LORA_FREQ_HZ 915E6
+#endif
+// Heltec V3 SPI pins for LoRa (standard ESP32 SPI2)
+#ifndef LORA_SCK
+#define LORA_SCK 9
+#endif
+#ifndef LORA_MISO
+#define LORA_MISO 11
+#endif
+#ifndef LORA_MOSI
+#define LORA_MOSI 10
+#endif
+#ifndef LORA_SS
+#define LORA_SS 8
+#endif
+// Note: RST and DIO0 may not be needed for LoRa library
+#ifndef LORA_RST
+#define LORA_RST -1
+#endif
+#ifndef LORA_DIO0
+#define LORA_DIO0 -1
 #endif
 
 // Default WiFi AP (gateway always starts AP so a tablet can connect)

@@ -4,9 +4,28 @@
 #define TANK_ID 2
 #endif
 
-// Heltec WiFi LoRa 32 typically uses built-in LoRa pins; LoRa library handles defaults.
+// Heltec WiFi LoRa 32 V3 LoRa configuration
 #ifndef LORA_FREQ_HZ
 #define LORA_FREQ_HZ 915E6
+#endif
+// Explicit SPI pins for Heltec V3 (standard ESP32 SPI2)
+#ifndef LORA_SCK
+#define LORA_SCK 9
+#endif
+#ifndef LORA_MISO
+#define LORA_MISO 11
+#endif
+#ifndef LORA_MOSI
+#define LORA_MOSI 10
+#endif
+#ifndef LORA_SS
+#define LORA_SS 8
+#endif
+#ifndef LORA_RST
+#define LORA_RST -1
+#endif
+#ifndef LORA_DIO0
+#define LORA_DIO0 -1
 #endif
 
 #ifndef LORA_KEY
@@ -16,10 +35,10 @@
 // Rochester 0..5V transmitter MUST be scaled to 0..3.3V ADC with a voltage divider.
 // Placeholder ADC pins (update based on your wiring and Heltec ADC availability)
 #ifndef PIN_GAUGE_ADC
-#define PIN_GAUGE_ADC 36
+#define PIN_GAUGE_ADC 12
 #endif
 #ifndef PIN_BATT_ADC
-#define PIN_BATT_ADC 37
+#define PIN_BATT_ADC 13
 #endif
 
 #ifndef ADC_REF_V
