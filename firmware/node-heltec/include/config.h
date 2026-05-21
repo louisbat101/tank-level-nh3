@@ -21,24 +21,28 @@
 #ifndef LORA_SS
 #define LORA_SS 8
 #endif
-#ifndef LORA_RST
-#define LORA_RST -1
+// LoRa pins for SX1262 on Heltec V3
+#ifndef LORA_DIO1
+#define LORA_DIO1 14  // DIO1 interrupt pin
 #endif
-#ifndef LORA_DIO0
-#define LORA_DIO0 -1
+#ifndef LORA_RST
+#define LORA_RST 12   // Reset pin
+#endif
+#ifndef LORA_BUSY
+#define LORA_BUSY 13  // BUSY signal (CRITICAL!)
 #endif
 
 #ifndef LORA_KEY
 #define LORA_KEY ""
 #endif
 
-// Rochester 0..5V transmitter MUST be scaled to 0..3.3V ADC with a voltage divider.
-// Placeholder ADC pins (update based on your wiring and Heltec ADC availability)
+// ADC pins - IMPORTANT: GPIO 13 is LoRa BUSY, can't use for ADC!
+// Use GPIO 4 and 5 instead (or other available ADC pins)
 #ifndef PIN_GAUGE_ADC
-#define PIN_GAUGE_ADC 12
+#define PIN_GAUGE_ADC 4   // Tank level gauge (was 12, moved to avoid conflicts)
 #endif
 #ifndef PIN_BATT_ADC
-#define PIN_BATT_ADC 13
+#define PIN_BATT_ADC 5    // Battery voltage (was 13, CONFLICTS with LORA_BUSY!)
 #endif
 
 #ifndef ADC_REF_V

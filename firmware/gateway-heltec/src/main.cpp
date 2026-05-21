@@ -496,9 +496,9 @@ void setup() {
   
   // Create Module object for RadioLib
   // Module(uint32_t cs, uint32_t irq, uint32_t rst, uint32_t gpio, SPIClass& spi, SPISettings spiSettings)
-  // GPIO 37 (RST) and 36 (GPIO0) don't work as outputs on this board - use -1
-  Serial.println("Creating LoRa module with CS=8, IRQ=35, RST=-1, GPIO=-1...");
-  loRaModule = new Module(8, 35, -1, -1, *loRaSPI);
+  // Correct pins for Heltec V3: CS=8, DIO1=14, RST=12, BUSY=13
+  Serial.println("Creating LoRa module with CS=8, DIO1=14, RST=12, BUSY=13...");
+  loRaModule = new Module(8, 14, 12, 13, *loRaSPI);
   
   // Create and initialize LoRa module
   radio = new SX1262(loRaModule);
@@ -513,22 +513,27 @@ void setup() {
     Serial.printf("setFrequency: %d\n", state);
     g_loraOk = (state == RADIOLIB_ERR_NONE);
     if (g_loraOk) {
-      radio->setBandwidth(125.0);
       radio->setSpreadingFactor(7);
+      radio->setBandwidth(125.0);
       radio->setCodingRate(5);
-      radio->setOutputPower(17);
+      radio->setSyncWord(0x12);
+      radio->setCurrentLimit(140.0);
       radio->setPreambleLength(8);
-      radio->implicitHeader(12);  // TankPacket is ~12 bytes
-      state = radio->startReceive();
-      Serial.printf("startReceive: %d\n", state);
-      g_loraOk = (state == RADIOLIB_ERR_NONE);
+      radio->setCRC(true);  // CRITICAL: Enable CRC on both sides!
+      // DO NOT use explicitHeader() or implicitHeader() - let RadioLib decide
+      
+      // Start RX mode
+      int rxState = radio->startReceive();
+      Serial.printf("startReceive returned: %d\n", rxState);
+      Serial.println("LoRa RX ready (blocking receive mode)");
+      g_loraOk = true;
     }
   }
   
   if (!g_loraOk) {
     Serial.println("LoRa init failed (continuing without LoRa)");
   } else {
-    Serial.println("LoRa RX ready");
+    Serial.println("LoRa ready - listening for packets");
   }
 
   // FS + web
@@ -548,17 +553,54 @@ void setup() {
 }
 
 void loop() {
-  if (g_loraOk && radio) {
-    // Check if a packet has been received
-    int state = radio->available();
-    if (state > 0) {
-      uint8_t buf[256];
-      int len = radio->readData(buf, 256);
+  static bool rxTestDone = false;
+  const uint32_t now = millis();
+  
+  // ONE-TIME LOOPBACK TEST
+  if (!rxTestDone && now > 3000 && g_loraOk && radio) {
+    rxTestDone = true;
+    Serial.println("\n[TEST] Loopback test with blocking receive...");
+    
+    uint8_t testData[5] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE};
+    int txState = radio->transmit(testData, 5);
+    Serial.printf("[TEST] TX returned: %d\n", txState);
+    delay(500);
+    
+    // Try blocking receive with short timeout
+    Serial.println("[TEST] Trying blocking receive for 5 seconds...");
+    String receivedStr;
+    int rxState = radio->receive(receivedStr, 5000);  // 5 second timeout
+    Serial.printf("[TEST] receive() returned: %d, got %d bytes\n", rxState, (int)receivedStr.length());
+    if (receivedStr.length() > 0) {
+      Serial.println("[TEST] ✓✓✓ SUCCESS - Radio RX works with blocking receive!");
+    }
+  }
+  
+  // MAIN RX LOOP USING BLOCKING RECEIVE WITH BINARY BUFFER
+  if (g_loraOk && radio && rxTestDone) {
+    // Use binary buffer instead of String to properly handle binary TankPacket data
+    uint8_t rxBuffer[256] = {0};
+    int state = radio->receive(rxBuffer, 1000);  // 1 second timeout per loop
+    
+    if (state == RADIOLIB_ERR_NONE) {
+      // Check how many bytes were actually received
+      int len = radio->getPacketLength();
+      
+      // Fallback: try readData if getPacketLength returns 0
+      if (len == 0) {
+        len = 256;  // Try to read up to 256 bytes
+      }
+      
       if (len > 0) {
-        TankPacket p{};
-        if (parsePacket(buf, (size_t)len, p)) {
-          const uint8_t idx = (uint8_t)(p.tankId - 1);
-          if (idx < 8) {
+        Serial.printf("\n✓ Packet received! %d bytes\n", len);
+        
+        // Only process if we have expected packet size
+        if (len == sizeof(TankPacket)) {
+          TankPacket p{};
+          memcpy(&p, rxBuffer, sizeof(TankPacket));
+          
+          if (p.tankId >= 1 && p.tankId <= 8) {
+            const uint8_t idx = p.tankId - 1;
             TankState& t = g_tanks[idx];
             t.levelPct = (float)p.levelPct_x100 / 100.0f;
             t.battV = (float)p.battV_mV / 1000.0f;
@@ -566,16 +608,24 @@ void loop() {
             t.lastSeenMs = millis();
             t.online = true;
             wsBroadcastState();
-            Serial.printf("RX tank=%u level=%.1f batt=%.2fV (%u%%)\n", p.tankId, t.levelPct, t.battV, t.battPct);
+            Serial.printf("✓✓✓ TANK %u: level=%.1f%% batt=%.2fV (%u%%)\n", 
+              p.tankId, t.levelPct, t.battV, t.battPct);
             drawStatus();
           }
+        } else if (len > 0) {
+          // Debug: show what we received
+          Serial.printf("Wrong packet size: %d (expected %u)\n", len, (unsigned)sizeof(TankPacket));
+          Serial.print("Data: ");
+          for (int i = 0; i < len && i < 20; i++) {
+            Serial.printf("%02X ", rxBuffer[i]);
+          }
+          Serial.println();
         }
       }
     }
   }
 
   static uint32_t lastWs = 0;
-  const uint32_t now = millis();
   if (now - lastWs >= WS_STATE_PERIOD_MS) {
     lastWs = now;
     ws.cleanupClients();

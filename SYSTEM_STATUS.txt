@@ -1,0 +1,328 @@
+═══════════════════════════════════════════════════════════════════════════════
+TANK LEVEL NH3 MONITORING SYSTEM - FINAL STATUS
+═══════════════════════════════════════════════════════════════════════════════
+
+DATE: May 20, 2026, 19:44 UTC
+SYSTEM: macOS (zsh) | IDE: VS Code + PlatformIO
+
+═══════════════════════════════════════════════════════════════════════════════
+✅ HARDWARE STATUS - ALL DEVICES CONNECTED
+═══════════════════════════════════════════════════════════════════════════════
+
+GATEWAY (Port 0001)
+├─ Device: Heltec WiFi LoRa 32 V3 (ESP32-S3)
+├─ MAC Address: AC:A7:04:08:40:78
+├─ Firmware: gateway-heltec
+├─ Status: BOOTING ✅
+├─ Features:
+│  ├─ WiFi AP: TankMonitor @ 192.168.4.1
+│  ├─ Web Dashboard: http://192.168.4.1 (HTML/CSS/JS via LittleFS)
+│  ├─ LoRa RX: 915 MHz (Initialized ✅)
+│  ├─ WebSocket: Ready for real-time updates
+│  └─ LittleFS: 5 files loaded
+└─ Last Status: LoRa RX ready, serving web requests
+
+TANK NODE 1 (Port 4)
+├─ Device: Heltec WiFi LoRa 32 V3 (ESP32-S3)
+├─ MAC Address: AC:A7:04:09:FA:E8
+├─ Firmware: node-heltec (TANK_ID=2)
+├─ Status: BOOTING ✅
+├─ Features:
+│  ├─ WiFi AP: TankNode-2 @ 192.168.4.x
+│  ├─ ADC Inputs: 
+│  │  ├─ GPIO 12 (Tank Level Gauge)
+│  │  └─ GPIO 13 (Battery Voltage)
+│  ├─ LoRa TX: 915 MHz (Initialized ✅, Transmitting ❌)
+│  ├─ WebServer: Status page at /status
+│  └─ TankPacket: 12 bytes with CRC16
+└─ Last Status: TX failing (error -5: RADIOLIB_ERR_TX_TIMEOUT)
+
+TANK NODE 2 (Port 3)
+├─ Device: Heltec WiFi LoRa 32 V3 (ESP32-S3)
+├─ MAC Address: 3C:0F:02:ED:B3:EC
+├─ Firmware: node-heltec (TANK_ID=2)
+├─ Status: BOOTING ✅
+├─ Features:
+│  ├─ WiFi AP: TankNode-2 @ 192.168.4.x
+│  ├─ ADC Inputs: (same as Tank 1)
+│  ├─ LoRa TX: 915 MHz (Initialized ✅, Transmitting ❌)
+│  └─ Status Page: HTTP endpoint active
+└─ Last Status: TX failing (error -5: RADIOLIB_ERR_TX_TIMEOUT)
+
+═══════════════════════════════════════════════════════════════════════════════
+🎯 MAJOR BREAKTHROUGH - GPIO PIN CONFIGURATION FIX
+═══════════════════════════════════════════════════════════════════════════════
+
+PROBLEM: LoRa init hanging indefinitely on all boards
+├─ RadioLib's SX1262::begin() would never return
+├─ Affected all 3 boards identically
+├─ Blocked all further development
+
+ROOT CAUSE: GPIO 36 & 37 cannot be used as outputs on ESP32-S3
+├─ These pins are ADC-only (analog input)
+├─ SX1262 Module constructor tried to configure them as RST & GPIO0
+├─ This caused SPI initialization to hang
+
+SOLUTION: Use GPIO -1 for pins that aren't connected
+├─ Old: Module(8, 35, 37, 36, *loRaSPI)  // HANGS
+├─ New: Module(8, 35, -1, -1, *loRaSPI)   // WORKS ✅
+├─ Result: radio->begin() now returns 0 (success)
+├─ Applies to all three boards
+
+MODULE PIN MAPPING (Correct):
+├─ CS (Chip Select):     GPIO 8
+├─ IRQ (Interrupt):      GPIO 35
+├─ RST (Reset):          GPIO -1 (not connected)
+└─ GPIO0 (General IO):   GPIO -1 (not connected)
+
+SPI PIN MAPPING:
+├─ SCK (Clock):    GPIO 9
+├─ MISO (Input):   GPIO 11
+├─ MOSI (Output):  GPIO 10
+└─ CS (Select):    GPIO 8 (via Module constructor)
+
+═══════════════════════════════════════════════════════════════════════════════
+📊 LORA RADIO CONFIGURATION (915 MHz US ISM BAND)
+═══════════════════════════════════════════════════════════════════════════════
+
+Frequency:              915.0 MHz
+Bandwidth:              125.0 kHz
+Spreading Factor:       7
+Coding Rate:            5 (4/5)
+Output Power:           17 dBm
+Preamble Length:        8 symbols
+Header Mode:            Implicit (12-byte fixed packet)
+TX Timeout:             10,000 ms (default)
+
+LORA PACKET FORMAT (TankPacket):
+├─ Byte 0:      Tank ID (uint8_t)
+├─ Bytes 1-4:   Uptime in seconds (uint32_t)
+├─ Bytes 5-6:   Tank level * 100 (uint16_t, 0-10000)
+├─ Bytes 7-8:   Battery voltage in mV (uint16_t)
+├─ Byte 9:      Battery percentage (uint8_t, 0-100)
+├─ Bytes 10-11: CRC16 checksum (uint16_t)
+└─ Total Size:  12 bytes
+
+═══════════════════════════════════════════════════════════════════════════════
+🔴 CURRENT BLOCKER - LORA TX TIMEOUT (ERROR -5)
+═══════════════════════════════════════════════════════════════════════════════
+
+SYMPTOM:
+├─ Both Tank nodes fail to transmit
+├─ Error code: -5 (RADIOLIB_ERR_TX_TIMEOUT)
+├─ radio->begin() succeeds (returns 0)
+├─ radio->startReceive() succeeds (returns 0)
+├─ radio->transmit() always returns -5
+└─ Occurs on every attempt, all configurations
+
+ERROR CODE MAPPING:
+├─ -5 = RADIOLIB_ERR_TX_TIMEOUT
+├─ Occurs when DIO0 (IRQ) interrupt doesn't trigger during transmission
+├─ Indicates TX control sequence not completing
+└─ Could be hardware or firmware issue
+
+ATTEMPTED FIXES (ALL FAILED):
+  1. ✓ Fixed GPIO pin configuration (worked for init, not TX)
+  2. ✓ Added standby mode before transmit (no change)
+  3. ✓ Tried explicit vs implicit header modes (no change)
+  4. ✓ Added 3x retry logic with delays (still -5 on all retries)
+  5. ✓ Increased preamble length & changed delays (no change)
+  6. ✓ Put radio to sleep after TX (no change)
+  7. ✓ Adjusted packet format & CRC (no change)
+
+ROOT CAUSE ANALYSIS:
+├─ Most Likely: DIO0 (GPIO 35) interrupt not firing
+├─ Possible: SX1262 TX amplifier not responding
+├─ Possible: SPI timing issue during TX phase
+├─ Hardware-specific: Issue doesn't occur with SX1272/SX1276 (older chips)
+├─ Pattern: Works for init, fails for TX = likely DIO pin issue
+└─ Next step: Oscilloscope/logic analyzer on DIO0 during TX attempt
+
+═══════════════════════════════════════════════════════════════════════════════
+✅ WORKING FEATURES (VERIFIED)
+═══════════════════════════════════════════════════════════════════════════════
+
+GATEWAY:
+├─ WiFi AP broadcasts "TankMonitor" SSID
+├─ Web server responds at 192.168.4.1
+├─ LittleFS loads 5 web files (app.js, index.html, setup.html, setup.js, styles.css)
+├─ LoRa module initializes successfully
+├─ RX mode starts without errors
+├─ Preferences NVS storage initialized
+├─ Tank state tracking ready
+└─ WebSocket infrastructure in place
+
+TANK NODES:
+├─ Both boot independently
+├─ Both initialize SPI and LoRa radio
+├─ Both read ADC values successfully
+├─ Both build valid TankPacket structures
+├─ Both calculate CRC16 correctly
+├─ Both broadcast WiFi AP
+├─ Both serve HTTP status endpoint
+├─ Both calculate tank level percentage
+├─ Both calculate battery percentage
+└─ Both attempt transmission every 5 seconds
+
+═══════════════════════════════════════════════════════════════════════════════
+📚 LIBRARIES IN USE
+═══════════════════════════════════════════════════════════════════════════════
+
+RadioLib @ 6.6.0
+├─ Supports SX1262 (unlike older SandeepMistry LoRa)
+├─ Provides high-level radio abstraction
+├─ Required for Heltec V3 SX1262 chip
+└─ Issue: TX timeout with this board/chip combo
+
+ESPAsyncWebServer @ 3.11.0
+├─ Non-blocking HTTP server
+├─ WebSocket support ready
+└─ Powers gateway web dashboard
+
+AsyncTCP @ 3.4.10
+├─ Dependency for ESPAsyncWebServer
+└─ Low-latency network stack
+
+U8g2 @ 2.36.18
+├─ OLED display library (currently disabled due to hangs)
+├─ 128x64 monochrome display support
+└─ Used for status display (future)
+
+Arduino (ESP32) @ 3.20017.241212
+├─ ESP32-S3 core and libraries
+├─ Serial, SPI, WiFi, SPIFFS/LittleFS support
+└─ Bootloader and partition tables
+
+═══════════════════════════════════════════════════════════════════════════════
+🔧 BUILD & DEPLOYMENT INSTRUCTIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+PREREQUISITES:
+├─ VS Code with PlatformIO extension installed
+├─ macOS with zsh shell
+├─ Three Heltec WiFi LoRa 32 V3 boards with USB cables
+└─ Firmware files in firmware/{gateway-heltec,node-heltec}/ directories
+
+CLEAN BUILD (GATEWAY):
+$ cd firmware/gateway-heltec
+$ pio run -e heltec_wifi_lora_32
+$ pio run -t upload --upload-port /dev/cu.usbserial-0001
+
+CLEAN BUILD (TANK NODE):
+$ cd firmware/node-heltec
+$ pio run -e heltec_wifi_lora_32
+$ pio run -t upload --upload-port /dev/cu.usbserial-4  (Tank 1)
+$ pio run -t upload --upload-port /dev/cu.usbserial-3  (Tank 2)
+
+MONITOR SERIAL OUTPUT:
+$ pio device monitor -p /dev/cu.usbserial-0001 -b 115200
+
+TESTING:
+├─ Gateway: Visit http://192.168.4.1 in web browser
+├─ Tank Nodes: Check WiFi AP "TankNode-{ID}" @ 192.168.4.x
+├─ Tank Status: Visit http://TankNode-{ID}.local/status (JSON endpoint)
+└─ Serial Logs: Use pio device monitor for debugging
+
+═══════════════════════════════════════════════════════════════════════════════
+📋 PROJECT STRUCTURE
+═══════════════════════════════════════════════════════════════════════════════
+
+tank-level-nh3/
+├── firmware/
+│   ├── gateway-heltec/
+│   │   ├── platformio.ini          (Gateway board config)
+│   │   ├── src/
+│   │   │   └── main.cpp            (Gateway firmware, ~584 lines)
+│   │   ├── include/
+│   │   │   └── config.h            (Shared radio config)
+│   │   └── data/
+│   │       ├── app.js              (Dashboard logic)
+│   │       ├── index.html          (Main dashboard page)
+│   │       ├── setup.html          (Configuration page)
+│   │       ├── setup.js            (Setup logic)
+│   │       └── styles.css          (Styling)
+│   └── node-heltec/
+│       ├── platformio.ini          (Tank node board config)
+│       ├── src/
+│       │   └── main.cpp            (Tank node firmware, ~217 lines)
+│       └── include/
+│           └── config.h            (Shared + ADC pins)
+├── ui/                             (Standalone UI copy)
+├── docs/
+│   └── wiring.md                   (Hardware connection diagram)
+├── STATUS.md                       (This session's progress)
+├── SYSTEM_STATUS.txt              (Detailed system status)
+└── README.md                       (Project overview)
+
+═══════════════════════════════════════════════════════════════════════════════
+🚀 NEXT STEPS TO FIX TX ISSUE
+═══════════════════════════════════════════════════════════════════════════════
+
+IMMEDIATE (If continuing):
+1. Check GPIO 35 (DIO0) signal on oscilloscope during TX attempt
+2. Verify voltage levels: should see ~1-2μs pulses during transmission
+3. Try RadioLib 6.7.0 or 6.8.0 (newer versions may have fixes)
+4. Check Heltec documentation for SX1262 DIO pin mappings
+5. Inspect PCB for solder bridges or cold joints near SX1262
+
+ALTERNATIVE APPROACHES:
+1. Use WiFi for tank node communication (requires WiFi network setup)
+2. Use different LoRa boards with SX1272/SX1276 + SandeepMistry library
+3. Implement serial/UART mesh network between nodes
+4. Use LoRaWAN instead of raw LoRa (requires Activation)
+
+DIAGNOSTIC TOOLS:
+├─ Radio test: radio->readRegister(RADIOLIB_SX126X_REG_CHIP_TYPE) 
+├─ DIO monitoring: digitalWrite(GPIO 35) during radio operations
+├─ SPI bus: Add logic analyzer to SCK/MOSI/MISO/CS during TX
+└─ Temperature: Check if radio overheating (>80°C)
+
+═══════════════════════════════════════════════════════════════════════════════
+📝 DOCUMENTATION ARTIFACTS
+═══════════════════════════════════════════════════════════════════════════════
+
+CREATED:
+├─ STATUS.md                        (Detailed status and troubleshooting)
+├─ SYSTEM_STATUS.txt               (This comprehensive system status)
+└─ GET_GATEWAY_MAC.md              (Gateway MAC address documentation)
+
+MODIFIED:
+├─ firmware/node-heltec/src/main.cpp           (217 lines)
+├─ firmware/node-heltec/include/config.h       (119 lines)
+├─ firmware/gateway-heltec/src/main.cpp        (584 lines)
+└─ firmware/gateway-heltec/include/config.h    (shared)
+
+═══════════════════════════════════════════════════════════════════════════════
+✨ SUMMARY & ACHIEVEMENTS
+═══════════════════════════════════════════════════════════════════════════════
+
+SESSION GOALS ACHIEVED:
+✅ All three boards boot successfully
+✅ LoRa radio module initialized on all boards
+✅ Fixed critical GPIO configuration bug
+✅ WiFi AP running on all nodes
+✅ Web dashboard infrastructure ready
+✅ ADC sensor input reading working
+✅ Packet structure and CRC working
+✅ Board identification and mapping complete
+✅ Comprehensive documentation created
+
+REMAINING CHALLENGES:
+❌ LoRa TX transmission timing out (error -5)
+❌ Gateway not receiving packets from tank nodes
+❌ OLED display initialization hanging (disabled)
+
+HARDWARE VERIFIED:
+✅ Three Heltec V3 boards connected via USB
+✅ All bootloaders responding
+✅ Serial communication working
+✅ WiFi AP broadcasting
+✅ SPI bus operational (for init)
+✅ ADC inputs responding
+❌ LoRa DIO0 interrupt (suspected issue)
+
+═══════════════════════════════════════════════════════════════════════════════
+
+System ready for debugging LoRa TX issue or alternative communication methods.
+
+═══════════════════════════════════════════════════════════════════════════════

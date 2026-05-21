@@ -115,11 +115,10 @@ void setup(){
   loRaSPI->begin(9, 11, 10, 8);
   Serial.println("SPI initialized");
   
-  // Module(CS, IRQ, RST, GPIO0, SPI)
-  // GPIO 37 (RST) and 36 (GPIO0) may not work as outputs on this board
-  // Try with -1 to disable hardware reset and GPIO0
-  loRaModule = new Module(8, 35, -1, -1, *loRaSPI);
-  Serial.println("Module created");
+  // Module(CS, DIO1, RST, BUSY, SPI)
+  // Correct pins for Heltec V3: CS=8, DIO1=14, RST=12, BUSY=13
+  loRaModule = new Module(LORA_SS, LORA_DIO1, LORA_RST, LORA_BUSY, *loRaSPI);
+  Serial.println("Module created (CS=8, DIO1=14, RST=12, BUSY=13)");
   
   radio = new SX1262(loRaModule);
   Serial.println("Calling radio->begin()...");
@@ -132,14 +131,15 @@ void setup(){
     // Don't hang - allow node to still broadcast WiFi AP and status
   } else {
     radio->setFrequency(LORA_FREQ_HZ / 1e6);
-    radio->setBandwidth(125.0);
     radio->setSpreadingFactor(7);
+    radio->setBandwidth(125.0);
     radio->setCodingRate(5);
-    radio->setOutputPower(17);
-    // Try to increase preamble length and disable CCA to reduce TX timeouts
+    radio->setSyncWord(0x12);
+    radio->setCurrentLimit(140.0);
     radio->setPreambleLength(8);
-    // Use implicit header (shorter packets)
-    radio->implicitHeader(sizeof(TankPacket));
+    radio->setCRC(true);  // CRITICAL: Must match RX side!
+    radio->setOutputPower(17);
+    // DO NOT use explicitHeader() or implicitHeader()
     Serial.println("LoRa initialized");
   }
 
@@ -218,12 +218,12 @@ void loop(){
       } else {
         Serial.printf("TX failed: %d (after retries)\n", state);
       }
-      // Go back to sleep to save power
-      radio->sleep();
+      // Return to standby instead of sleep - allows faster next transmission
+      radio->standby();
     }
 
     // Skip OLED for now
     // drawStatus(levelPct, battV, battPct);
-    Serial.printf("Sent tank=%u level=%.1f%% batt=%.2fV (%u%%)\n", p.tankId, levelPct, battV, battPct);
+    Serial.printf("Sent tank=%u level=%.1f%% (gauge=%.2fV) batt=%.2fV (%u%%)\n", p.tankId, levelPct, gaugeRealV, battV, battPct);
   }
 }
